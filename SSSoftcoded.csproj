@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk">
+﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net35</TargetFramework>
@@ -13,6 +13,7 @@
     <PackageReference Include="BepInEx.Analyzers" Version="1.*" PrivateAssets="all" />
     <PackageReference Include="BepInEx.Core" Version="5.*" />
     <PackageReference Include="BepInEx.PluginInfoProps" Version="1.*" />
+    <PackageReference Include="NAudio" Version="1.10.0" />
     <PackageReference Include="UnityEngine.Modules" Version="5.5.1" IncludeAssets="compile" />
   </ItemGroup>
   
@@ -23,6 +24,12 @@
   <ItemGroup>
     <Reference Include="Failbetter.Core">
       <HintPath>..\-- Dependencies --\Failbetter.Core.dll</HintPath>
+    </Reference>
+    <Reference Include="NVorbis">
+      <HintPath>..\-- Dependencies --\NVorbis.dll</HintPath>
+    </Reference>
+    <Reference Include="NVorbis.NAudioSupport">
+      <HintPath>..\-- Dependencies --\NVorbis.NAudioSupport.dll</HintPath>
     </Reference>
     <Reference Include="Sunless.Game">
       <HintPath>..\-- Dependencies --\Sunless.Game.dll</HintPath>
