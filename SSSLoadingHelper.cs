@@ -2,32 +2,86 @@
 using Sunless.Game.ApplicationProviders;
 using System.Collections.Generic;
 using System.Linq;
-using System;
 using System.IO;
+using Sunless.Game.Audio;
 
 namespace SSSoftcoded
 {
     public static class SSSLoadingHelper
     {
-        private static string loadingScreenAbsoluteFilePath = GameProvider.Instance.GetApplicationPath("images/sn/wallpapers/");
-        private static string loadingScreenAssetPath = "UI/Loading/Backgrounds/";
-        private static string musicAbsoluteFilePath = GameProvider.Instance.GetApplicationPath("audio/music/");
-        private static string musicAssetPath = "Audio/Music/";
-        private static string ambientSFXAbsoluteFilePath = GameProvider.Instance.GetApplicationPath("audio/ambient sfx/");
-        private static string ambientSFXAssetPath = "Audio/AmbientFX/";
+        private static readonly string[] supportedWallpaperFormats = { ".png" };
+        private static readonly string[] supportedSoundFormats = { ".wav", ".mp3", ".ogg" };
 
-        public static List<string> GetLoadingScreens()
+        private static readonly string wallpaperFilePath = GameProvider.Instance.GetApplicationPath("images/sn/wallpapers/");
+        private static readonly string musicAbsoluteFilePath = GameProvider.Instance.GetApplicationPath("audio/music/");
+        private static readonly string ambientSFXAbsoluteFilePath = GameProvider.Instance.GetApplicationPath("audio/ambient sfx/");
+        private static readonly string regularSFXFilePath = GameProvider.Instance.GetApplicationPath("audio/sfx/");
+
+        private static SSSLoadableResource[] customWallpapers;
+        private static SSSLoadableResource[] customMusicTracks;
+        private static SSSLoadableResource[] customAmbientSFX;
+        private static SSSLoadableResource[] customRegularSFX;
+
+        private static List<AudioClip> loadedAmbientSFX = new List<AudioClip>();
+        private static List<AudioClip> loadedRegularSFX = new List<AudioClip>();
+
+        public static void DocumentAllCustomContent()
         {
-            if (!Directory.Exists(loadingScreenAbsoluteFilePath))
-            {
-                return new List<string>();
-            }
-            return ((IEnumerable<string>)Directory.GetFiles(loadingScreenAbsoluteFilePath, "*.png", SearchOption.TopDirectoryOnly)).Select<string, string>((Func<string, string>)(file => file.Replace(loadingScreenAbsoluteFilePath, "").Replace(".png", ""))).OrderBy<string, string>((Func<string, string>)(x => x)).ToList<string>();
+            //load string arrays of all custom loading screens, custom music tracks, and custom ambientfx, to be referred to at runtime
+            customWallpapers = GetCustomWallpapers();
+            customMusicTracks = GetCustomAssetArray(GetMusicFilePath(), supportedSoundFormats);
+            customAmbientSFX = GetCustomAssetArray(GetAmbientSFXFilePath(), supportedSoundFormats);
+            customRegularSFX = GetCustomAssetArray(GetRegularSFXFilePath(), supportedSoundFormats);
         }
 
-        public static Texture2D GetBackgroundTexture(string textureName)
+        public static SSSLoadableResource[] GetCustomWallpapers()
         {
-            string text = GetLoadingScreenFilePath() + textureName + ".png";
+            List<SSSLoadableResource> wallpapers = GetCustomAssetArray(wallpaperFilePath, supportedWallpaperFormats).ToList<SSSLoadableResource>();
+            //Now we want to add asset references to any of the 14 (or 10) original wallpapers that haven't been replaced
+            for (int i = 1; i < (GameProvider.Instance.IsZubmariner ? 14 : 10); i++)
+            {
+                if (!wallpapers.Any(w => w.GetName() == i.ToString()))
+                {
+                    wallpapers.Add(new SSSLoadableResource(i.ToString(), ""));
+                }
+            }
+            return wallpapers.ToArray();
+        }
+
+        public static SSSLoadableResource[] GetCustomAssetArray(string directoryPath, string[] extensions)
+        {
+            if (!Directory.Exists(directoryPath))
+            {
+                return new SSSLoadableResource[] { };
+            }
+            string[] allstrings = Directory.GetFiles(directoryPath, "*.*", SearchOption.TopDirectoryOnly);
+            List<string> uniqueNames = new List<string>();
+            List<SSSLoadableResource> returnResources = new List<SSSLoadableResource>();
+            // If there are multiple files with the same name with different extensions, load the first one and then complain about the rest
+            foreach (string s in allstrings)
+            {
+                string name = IsolateFileName(s);
+                string ext = IsolateExtension(s);
+
+                if (extensions.Contains(ext) && !uniqueNames.Contains(name))
+                {
+                    if (uniqueNames.Contains(name))
+                    {
+                        System.Console.WriteLine("Tried to document a file named " + name + ext + " for mod loading, but there is already a file in" + directoryPath + " named " + name + " with a different extension so the new file will be ignored.");
+                    }
+                    else
+                    {
+                        uniqueNames.Add(name);
+                        returnResources.Add(new SSSLoadableResource(name, ext));
+                    }
+                }
+            }
+            return returnResources.ToArray();
+        }
+
+        public static Texture2D LoadWallpaperTexture(SSSLoadableResource texture)
+        {
+            string text = GetWallpaperFilePath() + texture.GetAddress();
             Texture2D result;
             byte[] data = File.ReadAllBytes(text);
             Texture2D texture2D = new Texture2D(2048, 1024);
@@ -38,49 +92,126 @@ namespace SSSoftcoded
 
         public static AudioClip GetMusic(string clipName)
         {
-            if (Directory.Exists(GetMusicFilePath()))
+            foreach (SSSLoadableResource r in customMusicTracks)
             {
-                string[] fileNames = GetFileNamesByExtension(GetMusicFilePath(), new string[] { ".wav", ".ogg", ".mp3" });
-                foreach (string f in fileNames)
+                if (r.GetName().ToLower() == clipName.ToLower())
                 {
-                    string fName =  f.Substring(f.LastIndexOf('/') + 1);
-                    fName = fName.Substring(0, fName.LastIndexOf('.'));
-                    System.Console.WriteLine("fName is " + fName + ". clipName is " + clipName);
-                    if (fName == clipName)
-                    { 
-                        return SSSAudioLoader.LoadSound(f);
-                    }
+                    AudioClip clip = SSSAudioLoader.LoadSound(GetMusicFilePath() + r.GetAddress());
+                    loadedAmbientSFX.Add(clip);
+                    return clip;
                 }
             }
             return null;
         }
 
-        public static string[] GetFileNamesByExtension(string directoryPath, string[] extensions)
+        public static AudioClip GetAmbientSFX(string clipName)
         {
-            string[] allFileNames = Directory.GetFiles(directoryPath);
-            List<string> returnAbleFileNames = new List<string>();
-            foreach (string f in allFileNames)
+            //First check if we've already got this sound effect loaded, which could happen if it's played very frequently
+            foreach (AudioClip a in loadedAmbientSFX)
             {
-                foreach (string e in extensions)
+                if (a.name.ToLower() == clipName.ToLower())
                 {
-                    if (f.EndsWith(e))
-                    {
-                        returnAbleFileNames.Add(f);
-                        break;
-                    }
+                    return a;
                 }
             }
-            return returnAbleFileNames.ToArray();
+            //Otherwise, find it in the array and load it
+            foreach (SSSLoadableResource r in customAmbientSFX)
+            {
+                if (r.GetName().ToLower() == clipName.ToLower())
+                {
+                    AudioClip clip = SSSAudioLoader.LoadSound(GetAmbientSFXFilePath() + r.GetAddress());
+                    loadedAmbientSFX.Add(clip);
+                    return clip;
+                }
+            }
+            return null;
         }
 
-        public static string GetLoadingScreenFilePath()
+        public static AudioClip GetRegularSFX(string clipName)
         {
-            return loadingScreenAbsoluteFilePath;
+            //First check if we've already got this sound effect loaded, which could happen if it's played very frequently
+            foreach (AudioClip a in loadedRegularSFX)
+            {
+                if (a.name.ToLower() == clipName.ToLower())
+                {
+                    return a;
+                }
+            }
+            //Otherwise, find it in the array and load it
+            foreach (SSSLoadableResource r in customRegularSFX)
+            {
+                if (r.GetName().ToLower() == clipName.ToLower())
+                {
+                    AudioClip clip = SSSAudioLoader.LoadSound(GetRegularSFXFilePath() + r.GetAddress());
+                    loadedRegularSFX.Add(clip);
+                    return clip;
+                }
+            }
+            return null;
         }
 
-        public static string GetLoadingScreenAssetPath()
+        public static bool CustomAmbientSFXExists(string name)
         {
-            return loadingScreenAssetPath;
+            if (customAmbientSFX.Any(s => s.GetName().ToLower() == name.ToLower()))
+            {
+                return true;
+            }
+            return false;
+        }
+
+        public static bool CustomRegularSFXExists(string name)
+        {
+            if (customRegularSFX.Any(s => s.GetName().ToLower() == name.ToLower()))
+            {
+                return true;
+            }
+            return false;
+        }
+
+        public static bool UnloadAmbientSFX(string clipName)
+        {
+            for (int i = 0; i < loadedAmbientSFX.Count; i++)
+            {
+                if (loadedAmbientSFX[i].name == clipName)
+                {
+                    loadedAmbientSFX.RemoveAt(i);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        public static bool UnloadRegularSFX(string clipName)
+        {
+            for (int i = 0; i < loadedRegularSFX.Count; i++)
+            {
+                if (loadedRegularSFX[i].name == clipName)
+                {
+                    loadedRegularSFX.RemoveAt(i);
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        public static SSSLoadableResource[] GetCustomWallPapers()
+        {
+            return customWallpapers;
+        }
+
+        public static SSSLoadableResource[] GetCustomMusicTracks()
+        {
+            return customMusicTracks;
+        }
+
+        public static SSSLoadableResource[] GetCustomAmbientSFX()
+        {
+            return customAmbientSFX;
+        }
+
+        public static string GetWallpaperFilePath()
+        {
+            return wallpaperFilePath;
         }
 
         public static string GetMusicFilePath()
@@ -88,19 +219,14 @@ namespace SSSoftcoded
             return musicAbsoluteFilePath;
         }
 
-        public static string GetMusicAssetPath()
-        {
-            return musicAssetPath;
-        }
-
         public static string GetAmbientSFXFilePath()
         {
             return ambientSFXAbsoluteFilePath;
         }
 
-        public static string GetAmbientSFXAssetPath()
+        public static string GetRegularSFXFilePath()
         {
-            return ambientSFXAssetPath;
+            return regularSFXFilePath;
         }
 
         public static string IsolateFileName(string filePath)
@@ -109,6 +235,11 @@ namespace SSSoftcoded
             name = name.Substring(0, name.LastIndexOf('.'));
 
             return name;
+        }
+
+        public static string IsolateExtension(string filePath)
+        {
+            return filePath.Substring(filePath.LastIndexOf('.'));
         }
     }
 }

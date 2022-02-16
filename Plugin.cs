@@ -4,11 +4,12 @@ using Sunless.Game.Scripts.UI;
 using Sunless.Game.Audio;
 using UnityEngine;
 using UnityEngine.UI;
-using Sunless.Game.ApplicationProviders;
 using Sunless.Game.Entities;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine.Audio;
+using Sunless.Game.ApplicationProviders;
+using System;
 
 namespace SSSoftcoded
 {
@@ -17,11 +18,11 @@ namespace SSSoftcoded
     {
         private void Start()
         {
-            //SSSLoadingHelper.LoadMusic();
+            SSSLoadingHelper.DocumentAllCustomContent();
         }
         private void Awake()
         {
-            Logger.LogInfo($"Loaded {PluginInfo.PLUGIN_GUID}!");
+            Logger.LogInfo($"Loaded {PluginInfo.PLUGIN_GUID} {PluginInfo.PLUGIN_VERSION}!");
             DoPatching();
         }
 
@@ -29,6 +30,10 @@ namespace SSSoftcoded
         {
             Harmony.CreateAndPatchAll(typeof(SetupBackgroundPatch));
             Harmony.CreateAndPatchAll(typeof(QueueTrackPatch));
+            Harmony.CreateAndPatchAll(typeof(PlayAmbientFXPatch));
+            Harmony.CreateAndPatchAll(typeof(StopAmbientFXPatch));
+            Harmony.CreateAndPatchAll(typeof(PlayRegularSFXPatch));
+            Harmony.CreateAndPatchAll(typeof(StopRegularSFXPatch));
         }
     }
 
@@ -38,34 +43,15 @@ namespace SSSoftcoded
         static bool Prefix(LoadingScreen __instance)
         {
             GameObject gameObject = GameObject.Find("Wallpaper");
-            //The numbers 1-10 in the folder will overwrite the 1-10 loading screens in the asset. All other filenames will be added to the list.
-            //If Zubmariner is installed, 11-14 will overwrite. If not, they will add.
-            List<string> knownLoadingScreens = GameProvider.Instance.IsZubmariner ? new List<string> { "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14" } : new List<string> { "1", "2", "3", "4", "5", "6", "7", "8", "9", "10" };
-            List<LoadableResource> loadingScreens = new List<LoadableResource>();
-            foreach (string screen in SSSLoadingHelper.GetLoadingScreens())
-            {
-                if (knownLoadingScreens.Contains(screen))
-                {
-                    loadingScreens.Add(new LoadableResource(screen, true, true));
-                    knownLoadingScreens.Remove(screen);
-                }
-                else
-                {
-                    loadingScreens.Add(new LoadableResource(screen, false, true));
-                }
-            }
-            foreach (string screen in knownLoadingScreens)
-            {
-                loadingScreens.Add(new LoadableResource(screen, true, false));
-            }
-            int chosenLoadingScreen = UnityEngine.Random.Range(0, loadingScreens.Count - 1);
+            SSSLoadableResource[] wallpapers = SSSLoadingHelper.GetCustomWallPapers();
+            SSSLoadableResource chosenWallpaper = wallpapers[UnityEngine.Random.Range(0, wallpapers.Length - 1)];
             Texture2D texture2D;
-            if (loadingScreens[chosenLoadingScreen].GetFileResource())
+            if (chosenWallpaper.GetExtension() != "")
             {
-                texture2D = SSSLoadingHelper.GetBackgroundTexture(loadingScreens[chosenLoadingScreen].GetName());
+                texture2D = SSSLoadingHelper.LoadWallpaperTexture(chosenWallpaper);
             } else
             {
-                texture2D = UnityEngine.Resources.Load(SSSLoadingHelper.GetLoadingScreenAssetPath() + loadingScreens[chosenLoadingScreen].GetName()) as Texture2D;
+                texture2D = UnityEngine.Resources.Load("UI/Loading/Backgrounds/" + chosenWallpaper.GetName()) as Texture2D;
             }
             gameObject.GetComponent<RawImage>().texture = (Texture)texture2D;
             GameObject.Find("Tip").GetComponent<Text>().text = StaticEntities.LoadingScreenTips[UnityEngine.Random.Range(0, ((IEnumerable<string>)StaticEntities.LoadingScreenTips).Count<string>())];
@@ -132,18 +118,136 @@ namespace SSSoftcoded
             audioSource.rolloffMode = AudioRolloffMode.Custom;
             audioSource.maxDistance = (maxDistance ?? 400f);
             audioSource.spatialBlend = (panLevel ?? 1f);
-            //Check if the Ambient SFX is loaded from elsewhere
-            audioSource.clip = (Resources.Load("Audio/AmbientFX/" + clipName) as AudioClip);
-            if (loops)
+            audioSource.clip = SSSLoadingHelper.GetAmbientSFX(clipName);
+            if (audioSource.clip == null)
             {
-                audioSource.Play();
-            }
-            else
+                audioSource.clip = (Resources.Load("Audio/AmbientFX/" + clipName) as AudioClip);
+                if (loops)
+                {
+                    audioSource.Play();
+                }
+                else
+                {
+                    __instance.StartCoroutine(__instance.PlayOnce(audioSource));
+                }
+            } else
             {
-                __instance.StartCoroutine(__instance.PlayOnce(audioSource));
+                if (loops)
+                {
+                    audioSource.Play();
+                }
+                else
+                {
+                    SSSAudioPlayer audioPlayer = __instance.gameObject.AddComponent<SSSAudioPlayer>();
+                    audioPlayer.StartCoroutine(audioPlayer.PlayExternalAmbientSFXOnce(audioSource, __instance));
+                    UnityEngine.Object.Destroy(audioPlayer);
+                }
             }
             __instance._currentFX.Add(audioSource);
             __result = audioSource;
+            return false;
+        }
+    }
+
+    [HarmonyPatch(typeof(SFXManager), "Play", new Type[] { typeof(string), typeof(bool)})]
+    class PlayRegularSFXPatch
+    {
+        static bool Prefix(string clipName, bool loops, SFXManager __instance, ref AudioSource __result)
+        {
+            AudioSource audioSource = __instance.gameObject.AddComponent<AudioSource>();
+            audioSource.outputAudioMixerGroup = __instance.MasterMixer.FindMatchingGroups(SFXManager.SFX_MIXER_NAME).FirstOrDefault<AudioMixerGroup>();
+            audioSource.loop = loops;
+            audioSource.bypassEffects = true;
+            audioSource.spatialBlend = 0f;
+            audioSource.clip = SSSLoadingHelper.GetRegularSFX(clipName);
+            if (audioSource.clip == null)
+            {
+                audioSource.clip = (Resources.Load("Audio/SFX/" + clipName) as AudioClip);
+                if (loops)
+                {
+                    audioSource.Play();
+                }
+                else
+                {
+                    __instance.StartCoroutine(__instance.PlayOnce(audioSource));
+                }
+            } else
+            {
+                if (loops)
+                {
+                    audioSource.Play();
+                }
+                else
+                {
+                    SSSAudioPlayer audioPlayer = __instance.gameObject.AddComponent<SSSAudioPlayer>();
+                    audioPlayer.StartCoroutine(audioPlayer.PlayExternalRegularSFXOnce(audioSource, __instance));
+                    UnityEngine.Object.Destroy(audioPlayer);
+                }
+            }
+            __instance._currentFX.Add(audioSource);
+            __result = audioSource;
+            return false;
+        }
+    }
+
+    [HarmonyPatch(typeof(AmbientFXManager), "Stop")]
+    class StopAmbientFXPatch
+    {
+        static bool Prefix(AudioSource source, AmbientFXManager __instance)
+        {
+            __instance._currentFX.Remove(source);
+            bool flag = source == null || source.gameObject == null;
+            if (!flag)
+            {
+                bool custom = SSSLoadingHelper.CustomAmbientSFXExists(source.clip.name);
+                bool isPlaying = source.isPlaying;
+                if (isPlaying)
+                {
+                    source.Stop();
+                }
+                if (custom)
+                {
+                    SSSLoadingHelper.UnloadAmbientSFX(source.clip.name);
+                }
+                else
+                {
+                    Resources.UnloadAsset(source.clip);
+                }
+                UnityEngine.Object.Destroy(source);
+            }
+            return false;
+        }
+    }
+
+    [HarmonyPatch(typeof(SFXManager), "Stop")]
+    class StopRegularSFXPatch
+    {
+        static bool Prefix(AudioSource source, SFXManager __instance)
+        {
+            bool flag = GameProvider.Instance.EditorMode && source == null;
+            if (!flag)
+            {
+                __instance._currentFX.Remove(source);
+                bool flag2 = source == null || source.gameObject == null;
+                if (!flag2)
+                {
+                    bool custom = SSSLoadingHelper.CustomRegularSFXExists(source.clip.name);
+                    bool isPlaying = source.isPlaying;
+                    if (isPlaying)
+                    {
+                        source.Stop();
+                    }
+                    if (custom)
+                    {
+                        SSSLoadingHelper.UnloadRegularSFX(source.clip.name);
+                    }
+                    else
+                    {
+                        Resources.UnloadAsset(source.clip);
+                    }
+                    UnityEngine.Object.Destroy(source);
+                }
+            }
             return false;
         }
     }
