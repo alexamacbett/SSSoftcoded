@@ -18,6 +18,7 @@ namespace SSSoftcoded
     {
         private void Start()
         {
+            SSSLoadingHelper.Initialise();
             SSSLoadingHelper.DocumentAllCustomContent();
         }
         private void Awake()

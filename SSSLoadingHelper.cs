@@ -12,10 +12,12 @@ namespace SSSoftcoded
         private static readonly string[] supportedWallpaperFormats = { ".png" };
         private static readonly string[] supportedSoundFormats = { ".wav", ".mp3", ".ogg" };
 
-        private static readonly string wallpaperFilePath = GameProvider.Instance.GetApplicationPath("images/sn/wallpapers/");
-        private static readonly string musicAbsoluteFilePath = GameProvider.Instance.GetApplicationPath("audio/music/");
-        private static readonly string ambientSFXAbsoluteFilePath = GameProvider.Instance.GetApplicationPath("audio/ambient sfx/");
-        private static readonly string regularSFXFilePath = GameProvider.Instance.GetApplicationPath("audio/sfx/");
+        private static string wallpaperFilePath = GameProvider.Instance.GetApplicationPath("images/sn/wallpapers/");
+        private static string musicFilePath = GameProvider.Instance.GetApplicationPath("audio/music/");
+        private static string ambientSFXFilePath = GameProvider.Instance.GetApplicationPath("audio/ambient sfx/");
+        private static string regularSFXFilePath = GameProvider.Instance.GetApplicationPath("audio/sfx/");
+
+        private static bool ignoreVanillaWallpapers = false;
 
         private static SSSLoadableResource[] customWallpapers;
         private static SSSLoadableResource[] customMusicTracks;
@@ -24,6 +26,54 @@ namespace SSSoftcoded
 
         private static List<AudioClip> loadedAmbientSFX = new List<AudioClip>();
         private static List<AudioClip> loadedRegularSFX = new List<AudioClip>();
+
+        public static void Initialise()
+        {
+            if (File.Exists("SSSConfig.ini"))
+            {
+                string[] lines = File.ReadAllLines("SSSConfig.ini");
+                var optionsDict = new Dictionary<string, string>();
+
+                foreach (var s in lines)
+                {
+                    s.Trim();
+
+                    if (s.StartsWith("#") || s.StartsWith("["))
+                    {
+                        continue;
+                    }
+                    else if (s.Contains("="))
+                    {
+                        string[] split = s.Split('=');
+                        optionsDict.Add(split[0], split[1]);
+                    }
+                }
+
+                if (optionsDict["customWallpapers"] != "")
+                {
+                    wallpaperFilePath = CorrectFilePath(optionsDict["customWallpapers"]);
+                }
+                if (optionsDict["customMusic"] != "")
+                {
+                    musicFilePath = CorrectFilePath(optionsDict["customMusic"]);
+                }
+                if (optionsDict["customAmbientSFX"] != "")
+                {
+                    ambientSFXFilePath = CorrectFilePath(optionsDict["customAmbientSFX"]);
+                }
+                if (optionsDict["customRegularSFX"] != "")
+                {
+                    regularSFXFilePath = CorrectFilePath(optionsDict["customRegularSFX"]);
+                }
+                if (optionsDict["ignoreVanillaWallpapers"] == "true")
+                {
+                    ignoreVanillaWallpapers = true;
+                }
+            } else
+            {
+                System.Console.WriteLine("Couldn't find SSSConfig.ini in the Sunless Sea root folder. Only default settings will be available");
+            }
+        }
 
         public static void DocumentAllCustomContent()
         {
@@ -38,11 +88,15 @@ namespace SSSoftcoded
         {
             List<SSSLoadableResource> wallpapers = GetCustomAssetArray(wallpaperFilePath, supportedWallpaperFormats).ToList<SSSLoadableResource>();
             //Now we want to add asset references to any of the 14 (or 10) original wallpapers that haven't been replaced
-            for (int i = 1; i < (GameProvider.Instance.IsZubmariner ? 14 : 10); i++)
+            //Unless ignoreVanillaWallpapers is true; UNLESS UNLESS there are no custom wallpapers.
+            if (wallpapers.Count == 0 || !ignoreVanillaWallpapers)
             {
-                if (!wallpapers.Any(w => w.GetName() == i.ToString()))
+                for (int i = 1; i < (GameProvider.Instance.IsZubmariner ? 14 : 10); i++)
                 {
-                    wallpapers.Add(new SSSLoadableResource(i.ToString(), ""));
+                    if (!wallpapers.Any(w => w.GetName() == i.ToString()))
+                    {
+                        wallpapers.Add(new SSSLoadableResource(i.ToString(), ""));
+                    }
                 }
             }
             return wallpapers.ToArray();
@@ -216,12 +270,12 @@ namespace SSSoftcoded
 
         public static string GetMusicFilePath()
         {
-            return musicAbsoluteFilePath;
+            return musicFilePath;
         }
 
         public static string GetAmbientSFXFilePath()
         {
-            return ambientSFXAbsoluteFilePath;
+            return ambientSFXFilePath;
         }
 
         public static string GetRegularSFXFilePath()
@@ -240,6 +294,15 @@ namespace SSSoftcoded
         public static string IsolateExtension(string filePath)
         {
             return filePath.Substring(filePath.LastIndexOf('.'));
+        }
+
+        public static string CorrectFilePath(string filePath)
+        {
+            if (!filePath.EndsWith("/") && filePath.Length > 0)
+            {
+                filePath = filePath + "/";
+            }
+            return filePath;
         }
     }
 }
